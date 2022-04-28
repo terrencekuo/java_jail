@@ -716,9 +716,10 @@ public class JDI2JSON {
 	     .add("line", ""+row)
 	     .add("event", "uncaught_exception")
 	     .add("offset", ""+col)
-	     .add("exception_msg", errmsg))
+	     .add("exception_msg", Json.createArrayBuilder().add( Json.createArrayBuilder().add(errmsg) ) ))
                       .build()
                       );
+
     }
 
     static String fakify(String realcode) {
