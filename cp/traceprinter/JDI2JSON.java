@@ -21,6 +21,8 @@ import com.sun.jdi.event.*;
 import java.io.*;
 import javax.json.*;
 
+import javafx.util.Pair;
+
 public class JDI2JSON {
 
     private class InputPuller {
@@ -60,6 +62,9 @@ public class JDI2JSON {
     private TreeSet<Long> heap_done;
 
     /*    private ArrayList<Long> frame_stack = new ArrayList<Long>();*/
+
+    // the frame_ticker is the unique_hash value used by the frontend
+    // to determine if a frame has changed
     private long frame_ticker = 0;
 
     public List<ReferenceType> staticListable = new ArrayList<>();
@@ -73,10 +78,13 @@ public class JDI2JSON {
     boolean showStringsAsValues = true;
     boolean showAllFields = false;
 
+    // ****************************
+    // Constructor
+    // ****************************
     public JDI2JSON(VirtualMachine vm, InputStream vm_stdout, InputStream vm_stderr, JsonObject optionsObject) {
         stdout = new InputPuller(vm_stdout);
         stderr = new InputPuller(vm_stderr);
-	//frame_stack.add(frame_ticker++);
+        //frame_stack.add(frame_ticker++);
         if (optionsObject.containsKey("showStringsAsValues"))
             showStringsAsValues
                 = optionsObject.getBoolean("showStringsAsValues");
@@ -89,34 +97,41 @@ public class JDI2JSON {
         userlogged.append(S).append("\n");
     }
 
+    // ****************************
+    // method
+    // ****************************
     // returns null when nothing changed since the last time
     // (or when only event type changed and new value is "step_line")
+    //
+    // Event - https://docs.oracle.com/javase/8/docs/jdk/api/jpda/jdi/com/sun/jdi/event/Event.html
+    // Location - https://docs.oracle.com/javase/8/docs/jdk/api/jpda/jdi/com/sun/jdi/Locatable.html#location--
+    // ThreadReference - https://docs.oracle.com/javase/8/docs/jdk/api/jpda/jdi/com/sun/jdi/ThreadReference.html
     public ArrayList<JsonObject> convertExecutionPoint(Event e, Location loc, ThreadReference t) {
         stdout.pull();
         stderr.pull();
 
-	//System.out.println(e);
+        // System.out.println("convertExecutionPoint event: " + e);
 
-	ArrayList<JsonObject> results = new ArrayList<>();
+        ArrayList<JsonObject> results = new ArrayList<>();
 
         if (loc.method().name().indexOf("access$")>=0) return results; // don't visualize synthetic access$000 methods
 
         heap_done = new TreeSet<Long>();
         heap = new TreeMap<>();
 
-	JsonValue returnValue = null;
+        JsonValue returnValue = null;
 
         JsonObjectBuilder result = Json.createObjectBuilder();
         result.add("stdout", stdout.getContents());
         if (e instanceof MethodEntryEvent) {
             result.add("event", "call");
-	    //frame_stack.add(frame_ticker++);
+            //frame_stack.add(frame_ticker++);
             result.add("line", loc.lineNumber());
         }
         else if (e instanceof MethodExitEvent) {
             returnValue = convertValue(((MethodExitEvent)e).returnValue());
-	    result.add("event", "return");
-	    result.add("line", loc.lineNumber());
+            result.add("event", "return");
+            result.add("line", loc.lineNumber());
         }
         else if (e instanceof BreakpointEvent || e instanceof StepEvent) {
             result.add("event", "step_line");
@@ -135,9 +150,11 @@ public class JDI2JSON {
         }
 
         JsonArrayBuilder frames = Json.createArrayBuilder();
+
+        // https://docs.oracle.com/javase/8/docs/jdk/api/jpda/jdi/com/sun/jdi/StackFrame.html
         StackFrame lastNonUserFrame = null;
         try {
-	    boolean firstFrame = true;
+            boolean firstFrame = true;
             for (StackFrame sf : t.frames()) {
                 if (!showFramesInLocation(sf.location())) {
                     lastNonUserFrame = sf;
@@ -148,22 +165,29 @@ public class JDI2JSON {
                     frame_ticker++;
                     frames.add(convertFrameStub(lastNonUserFrame));
                     lastNonUserFrame = null;
+
+                    // we don't usually enter this condition
+                    // System.out.println("lastNonUserFrame " + frame_ticker);
                 }
+
+                // check if we need to update frame_ticker
+                // System.out.println("StackFrameTicker " + frame_ticker + " StrackFrame " + sf);
                 frame_ticker++;
+
                 frames.add(convertFrame(sf, firstFrame, returnValue));
-		firstFrame = false;
-		returnValue = null;
+
+                firstFrame = false;
+                returnValue = null;
             }
         }
         catch (IncompatibleThreadStateException ex) {
-	    //thread was not suspended .. should not normally happen
-
+            //thread was not suspended .. should not normally happen
             throw new RuntimeException("ITSE");
         }
         result.add("stack_to_render", frames);
 
         //if (e instanceof MethodExitEvent)
-	//  frame_stack.remove(frame_stack.size()-1);
+            //  frame_stack.remove(frame_stack.size()-1);
 
         JsonObjectBuilder statics = Json.createObjectBuilder();
         JsonArrayBuilder statics_a = Json.createArrayBuilder();
@@ -191,16 +215,32 @@ public class JDI2JSON {
         convertHeap(heapDescription);
         result.add("heap", heapDescription);
 
-	JsonObject this_ep = result.build();
-	if (reallyChanged(last_ep, this_ep)) {
-	    results.add(this_ep);
-	    last_ep = this_ep;
-	}
+        JsonObject this_ep = result.build();
+        System.err.println("oldEp " + last_ep);
+        System.err.println("newEp " + this_ep);
+        Pair<Boolean, JsonObject> changedResult = reallyChanged(last_ep, this_ep);
+        if (changedResult.getKey()) {
+            JsonObject updatedThisEp = changedResult.getValue();
+            System.err.println("UpdatedEpResult " + updatedThisEp);
+
+            results.add(updatedThisEp);
+            last_ep = updatedThisEp;
+
+            // why isn't this always done? maybe that is why we are missing frames
+            // results.add(this_ep);
+            // last_ep = this_ep;
+        }
+
+        JsonObject updatedThisEp = changedResult.getValue();
+        System.err.println("UpdatedEpResult2 " + updatedThisEp);
+        last_ep = updatedThisEp;
 
 
 
-	return results;
-    }
+        System.err.println("convertExecutionPoint done\n\n" + e);
+
+        return results;
+    } // convertExecutionPoint
 
     public static String[] builtin_packages = {"java", "javax", "sun", "com.sun", "traceprinter"};
 
@@ -226,16 +266,19 @@ public class JDI2JSON {
     }
 
     private boolean showFramesInLocation(Location loc) {
-	return (!in_builtin_package(loc.toString())
+        return (!in_builtin_package(loc.toString())
                 && !loc.method().name().contains("$access"));
         // skip synthetic accessor methods
     }
 
     private boolean showGuts(ReferenceType rt) {
-	return (rt.name().matches("(^|\\.)Point") ||
+        return (rt.name().matches("(^|\\.)Point") ||
                 !in_builtin_package(rt.name()));
     }
 
+    // ****************************
+    // method
+    // ****************************
     public boolean reportEventsAtLocation(Location loc) {
         if (in_builtin_package(loc.toString()))
             return false;
@@ -252,48 +295,161 @@ public class JDI2JSON {
     }
 
     private JsonObject createReturnEventFrom(Location loc, JsonObject base_ep, JsonValue returned) {
-	try {
-	    JsonObjectBuilder result = Json.createObjectBuilder();
-	    result.add("event", "return");
-	    result.add("line", loc.lineNumber());
-	    for (Map.Entry<String, JsonValue> me : base_ep.entrySet()) {
-		if (me.getKey().equals("event") || me.getKey().equals("line"))
-		    {}
-		else if (me.getKey().equals("stack_to_render")) {
-		    JsonArray old_stack_to_render = (JsonArray)me.getValue();
-		    JsonObject old_top_frame = (JsonObject)(old_stack_to_render.get(0));
-		    JsonObject old_top_frame_vars = (JsonObject)(old_top_frame.get("encoded_locals"));
-		    JsonArray old_top_frame_vars_o = (JsonArray)(old_top_frame.get("ordered_varnames"));
-		    result.add("stack_to_render",
-			       jsonModifiedArray(old_stack_to_render, 0,
-						 jsonModifiedObject
-						 (jsonModifiedObject
-						  (old_top_frame,
-						   "encoded_locals",
-						   jsonModifiedObject(old_top_frame_vars, "__return__", returned)),
-						  "ordered_varnames",
-						  jsonModifiedArray(old_top_frame_vars_o, -1, jsonString("__return__")))));
-		}
-		else result.add(me.getKey(), me.getValue());
-	    }
-	    return result.build();
-	}
-	catch (IndexOutOfBoundsException exc) {
-	    return base_ep;
-	}
+        try {
+            JsonObjectBuilder result = Json.createObjectBuilder();
+            result.add("event", "return");
+            result.add("line", loc.lineNumber());
+            for (Map.Entry<String, JsonValue> me : base_ep.entrySet()) {
+                if (me.getKey().equals("event") || me.getKey().equals("line"))
+                    {}
+                else if (me.getKey().equals("stack_to_render")) {
+                    JsonArray old_stack_to_render = (JsonArray)me.getValue();
+                    JsonObject old_top_frame = (JsonObject)(old_stack_to_render.get(0));
+                    JsonObject old_top_frame_vars = (JsonObject)(old_top_frame.get("encoded_locals"));
+                    JsonArray old_top_frame_vars_o = (JsonArray)(old_top_frame.get("ordered_varnames"));
+                    result.add("stack_to_render",
+                           jsonModifiedArray(old_stack_to_render, 0,
+                                 jsonModifiedObject
+                                 (jsonModifiedObject
+                                  (old_top_frame,
+                                   "encoded_locals",
+                                   jsonModifiedObject(old_top_frame_vars, "__return__", returned)),
+                                  "ordered_varnames",
+                                  jsonModifiedArray(old_top_frame_vars_o, -1, jsonString("__return__")))));
+                }
+                else result.add(me.getKey(), me.getValue());
+            }
+            return result.build();
+        }
+        catch (IndexOutOfBoundsException exc) {
+            return base_ep;
+        }
     }
 
     // issue: the frontend uses persistent frame ids but JDI doesn't provide them
     // approach 1, trying to compute them, seems intractable (esp. w/ callbacks)
     // approach 2, using an id based on stack depth, does not work w/ frontend
     // approach 3, just give each frame at each execution point a unique id,
-    // is what we do. but we also want to skip animating e.p.'s where nothing changed,
+    // approach 4 (tkuo), mix of approach 3 plus we use the old_ep if the contents of the old_ep and new_ep
+    //                      stack_to_render are the same
+    // is what we do. but we also want to skip animating execution points where nothing changed,
     // and if only the frame ids changed, we should treat it as if nothing changed
-    private boolean reallyChanged(JsonObject old_ep, JsonObject new_ep) {
-        if (old_ep == null) return true;
-        return !stripFrameIDs(new_ep).equals(stripFrameIDs(old_ep));
-    }
+    private Pair<Boolean, JsonObject> reallyChanged(JsonObject old_ep, JsonObject new_ep) {
+        if (old_ep == null) return new Pair<>(true, new_ep);
+        // boolean didReallyChanged = stripFrameIDs(new_ep).equals(stripFrameIDs(old_ep));
 
+        // example output
+        // {
+        //   "stdout": "",
+        //   "event": "step_line",
+        //   "line": 10,
+        //   "stack_to_render": [
+        //     {
+        //       "func_name": "<init>",
+        //       "encoded_locals": {
+        //         "this": [
+        //           "REF",
+        //           430
+        //         ]
+        //       },
+        //       "ordered_varnames": [
+        //         "this"
+        //       ],
+        //       "parent_frame_id_list": [],
+        //       "is_highlighted": true,
+        //       "is_zombie": false,
+        //       "is_parent": false,
+        //       "unique_hash": "7",
+        //       "frame_id": 7
+        //     },
+        //     {
+        //       "func_name": "main",
+        //       "encoded_locals": {},
+        //       "ordered_varnames": [],
+        //       "parent_frame_id_list": [],
+        //       "is_highlighted": false,
+        //       "is_zombie": false,
+        //       "is_parent": false,
+        //       "unique_hash": "8",
+        //       "frame_id": 8
+        //     }
+        //   ],
+        //   "globals": {},
+        //   "ordered_globals": [],
+        //   "func_name": "<init>",
+        //   "heap": {
+        //     "430": [
+        //       "INSTANCE",
+        //       "LinkedList",
+        //       [
+        //         "head",
+        //         null
+        //       ]
+        //     ]
+        //   } // }
+
+        JsonArray newEp = new_ep.getJsonArray("stack_to_render");
+        JsonArray oldEp = old_ep.getJsonArray("stack_to_render");
+        int newEpSize = new_ep.getJsonArray("stack_to_render").size();
+        int oldEpSize = old_ep.getJsonArray("stack_to_render").size();
+        JsonArrayBuilder result = Json.createArrayBuilder();
+        boolean overOverAllSame = false;
+        for (int i=0; i<newEpSize; i++) {
+            boolean overallSame = false;
+            JsonObject newFrame = (JsonObject) newEp.getJsonObject(i);
+
+            for (int j=0; j<oldEpSize; j++) {
+                boolean isSame = true;
+                JsonObject oldFrame = (JsonObject) oldEp.getJsonObject(j);
+
+                if (!newFrame.getString("func_name").equals(oldFrame.getString("func_name"))) {
+                    // System.err.println("same func_name " + newFrame.getString("func_name") + " " + oldFrame.getString("func_name"));
+                    isSame = false;
+                }
+                if (!newFrame.getJsonObject("encoded_locals").equals(oldFrame.getJsonObject("encoded_locals"))) {
+                    // System.err.println("same encoded_locals " + newFrame.getJsonObject("encoded_locals") + " " +  oldFrame.getJsonObject("encoded_locals"));
+                    isSame = false;
+                }
+                if (!newFrame.getJsonArray("ordered_varnames").equals(oldFrame.getJsonArray("ordered_varnames"))) {
+                    // System.err.println("same ordered_varnames " + newFrame.getJsonArray("ordered_varnames") + " " + oldFrame.getJsonArray("ordered_varnames"));
+                    isSame = false;
+                }
+
+                overallSame = overallSame || isSame;
+
+                if (isSame) {
+                    // replace the newEp with the oldEp because we don't want the unique_hash to chnage
+                    result.add(oldFrame);
+                    continue;
+                }
+
+                System.err.println("didReallyChange index=" + i + " isSame=" + isSame);
+            }
+
+            if (!overallSame) {
+                // use the newEp since we found no match with the oldEp
+                result.add(newFrame);
+            }
+
+            overOverAllSame = overOverAllSame || overallSame;
+        }
+
+        System.err.println("updatedNewEp");
+        JsonObject updatedNewEp = jsonModifiedObject(new_ep, "stack_to_render", result.build());
+        System.err.println("updated " + updatedNewEp);
+
+        boolean didReallyChanged = stripFrameIDs(updatedNewEp).equals(stripFrameIDs(old_ep));
+
+
+        // System.out.println("didReallyChangedNew " + !overallSame + " " + new_ep);
+        // System.out.println("didReallyChangedOld " + !overallSame + " " + old_ep);
+        // return new Pair<>(!overallSame, updatedNewEp);
+        return new Pair<>(!didReallyChanged, updatedNewEp);
+        // return didReallyChanged;
+
+    } // reallyChanged
+
+    // this strips "frame_id" and "unique_hash"
     private JsonObject stripFrameIDs(JsonObject ep) {
         JsonArrayBuilder result = Json.createArrayBuilder();
         for (JsonValue frame : (JsonArray)(ep.get("stack_to_render"))) {
@@ -313,7 +469,7 @@ public class JDI2JSON {
         if (sf.thisObject() != null) {
             result.add("this", convertValue(sf.thisObject()));
             result_ordered.add("this");
-	}
+        }
 
         // list args first
         /* KNOWN ISSUE:
@@ -343,10 +499,10 @@ public class JDI2JSON {
             completed_args = !JDWPerror && frame_args.size() == sf.getArgumentValues().size();
             for (LocalVariable lv : frame_args) {
                 //System.out.println(sf.location().method().getClass());
-		if (lv.name().equals("args")) {
-		    Value v = sf.getValue(lv);
-		    if (v instanceof ArrayReference && ((ArrayReference)v).length()==0) continue;
-		}
+                if (lv.name().equals("args")) {
+                    Value v = sf.getValue(lv);
+                    if (v instanceof ArrayReference && ((ArrayReference)v).length()==0) continue;
+                }
                 try {
                     result.add(lv.name(),
                                convertValue(sf.getValue(lv)));
@@ -359,6 +515,7 @@ public class JDI2JSON {
         }
         catch (AbsentInformationException e) {
         }
+
         // args did not have names, like a functional interface call...
         // although hopefully a future Java version will give them names!
         if (!completed_args && !JDWPerror) {
@@ -413,18 +570,26 @@ public class JDI2JSON {
         if (returnValue != null && (showVoid || returnValue != convertVoid)) {
             result.add("__return__", returnValue);
             result_ordered.add("__return__");
-	}
-	return Json.createObjectBuilder()
-	    .add("func_name", sf.location().method().name()+":"+sf.location().lineNumber())
-	    .add("encoded_locals", result)
-	    .add("ordered_varnames", result_ordered)
-	    .add("parent_frame_id_list", Json.createArrayBuilder())
-	    .add("is_highlighted", highlight)//frame_stack.size()-1)
-	    .add("is_zombie", false)
-	    .add("is_parent", false)
-	    .add("unique_hash", ""+frame_ticker)//frame_stack.get(level))
-	    .add("frame_id", frame_ticker);//frame_stack.get(level));
-    }
+        }
+
+        System.err.println("build_frame_stack " + sf.location().method().name());
+        String methodName = sf.location().method().name();
+        if (methodName.equals("<init>")) {
+            methodName = "constructor";
+        }
+
+        return Json.createObjectBuilder()
+            // .add("func_name", sf.location().method().name()+":"+sf.location().lineNumber())
+            .add("func_name", methodName) // prevent lineNumbers in function name
+            .add("encoded_locals", result)
+            .add("ordered_varnames", result_ordered)
+            .add("parent_frame_id_list", Json.createArrayBuilder())
+            .add("is_highlighted", highlight)//frame_stack.size()-1)
+            .add("is_zombie", false)
+            .add("is_parent", false)
+            .add("unique_hash", ""+frame_ticker)//frame_stack.get(level))
+            .add("frame_id", frame_ticker);//frame_stack.get(level));
+    } // convertFrame
 
     // used to show a single non-user frame when there is
     // non-user code running between two user frames
@@ -434,11 +599,11 @@ public class JDI2JSON {
             .add("encoded_locals", Json.createObjectBuilder())//.add("...", "..."))
             .add("ordered_varnames", Json.createArrayBuilder())//.add("..."))
             .add("parent_frame_id_list", Json.createArrayBuilder())
-	    .add("is_highlighted", false)//frame_stack.size()-1)
-	    .add("is_zombie", false)
-	    .add("is_parent", false)
-	    .add("unique_hash", ""+frame_ticker)//frame_stack.get(level))
-	    .add("frame_id", frame_ticker);//frame_stack.get(level));
+            .add("is_highlighted", false)//frame_stack.size()-1)
+            .add("is_zombie", false)
+            .add("is_parent", false)
+            .add("unique_hash", ""+frame_ticker)//frame_stack.get(level))
+            .add("frame_id", frame_ticker);//frame_stack.get(level));
     }
 
     void convertHeap(JsonObjectBuilder result) {
@@ -468,15 +633,15 @@ public class JDI2JSON {
 
         JsonArrayBuilder result = Json.createArrayBuilder();
 
-	// abbreviated versions are for references to objects
-	if (!fullVersion) {
-	    result.add("REF").add(obj.uniqueID());
-	    heap.put(obj.uniqueID(), obj);
-	    return result.build();
-	}
+        // abbreviated versions are for references to objects
+        if (!fullVersion) {
+            result.add("REF").add(obj.uniqueID());
+            heap.put(obj.uniqueID(), obj);
+            return result.build();
+        }
 
-	// full versions are for describing the objects themselves,
-	// in the heap
+        // full versions are for describing the objects themselves,
+        // in the heap
 
         else if (obj instanceof ArrayReference) {
             ArrayReference ao = (ArrayReference)obj;
@@ -512,7 +677,7 @@ public class JDI2JSON {
                 else result.add(convertValue(ao.getValue(i)));
             }
             return result.build();
-	}
+        }
         else if (obj instanceof StringReference) {
             return Json.createArrayBuilder()
                 .add("HEAP_PRIMITIVE")
@@ -522,29 +687,30 @@ public class JDI2JSON {
         }
         // do we need special cases for ClassObjectReference, ThreadReference,.... ?
         // stack and queue handling code by Will Gwozdz
-	else {
-	    if (obj.referenceType().name().equals("Queue")) {
-		heap_done.add(obj.uniqueID());
-		ReferenceType rt = obj.referenceType();
-		Field length = rt.fieldByName("N");
-		int queueLength = ((IntegerValue)obj.getValue(length)).value();
-		result.add("QUEUE");
-		if (queueLength > 0) {
-		    Field first = rt.fieldByName("first");
-		    ObjectReference thisNode = (ObjectReference)obj.getValue(first);
-		    ReferenceType nodeRT = thisNode.referenceType();
-		    Field val = nodeRT.fieldByName("item");
-		    Field next = nodeRT.fieldByName("next");
-		    for (int i = 0; i < queueLength; i++) {
-			Value v = thisNode.getValue(val);
-			result.add(convertValue(v));
-			thisNode = (ObjectReference) thisNode.getValue(next);
-		    }
-		}
-		return result.build();
-	    }
+        else {
+            if (obj.referenceType().name().equals("Queue")) {
+                heap_done.add(obj.uniqueID());
+                ReferenceType rt = obj.referenceType();
+                Field length = rt.fieldByName("N");
+                int queueLength = ((IntegerValue)obj.getValue(length)).value();
+                result.add("QUEUE");
+                if (queueLength > 0) {
+                    Field first = rt.fieldByName("first");
+                    ObjectReference thisNode = (ObjectReference)obj.getValue(first);
+                    ReferenceType nodeRT = thisNode.referenceType();
+                    Field val = nodeRT.fieldByName("item");
+                    Field next = nodeRT.fieldByName("next");
+                    for (int i = 0; i < queueLength; i++) {
+                        Value v = thisNode.getValue(val);
+                        result.add(convertValue(v));
+                        thisNode = (ObjectReference) thisNode.getValue(next);
+                    }
+                }
 
-	    if (obj.referenceType().name().equals("Stack")) {
+                return result.build();
+            }
+
+            if (obj.referenceType().name().equals("Stack")) {
                 heap_done.add(obj.uniqueID());
                 ReferenceType rt = obj.referenceType();
                 Field length = rt.fieldByName("N");
@@ -566,38 +732,37 @@ public class JDI2JSON {
             }
 
             // st handling code by Will Gwozdz
-	    if (obj.referenceType().name().equals("ST")) {
-		heap_done.add(obj.uniqueID());
-		ReferenceType rt = obj.referenceType();
-		result.add("DICT");
-		Field first = rt.fieldByName("first");
-		ObjectReference firstNode = (ObjectReference)obj.getValue(first);
+            if (obj.referenceType().name().equals("ST")) {
+                heap_done.add(obj.uniqueID());
+                ReferenceType rt = obj.referenceType();
+                result.add("DICT");
+                Field first = rt.fieldByName("first");
+                ObjectReference firstNode = (ObjectReference)obj.getValue(first);
 
-		class stHandler {
-		    public void loadResultFromSymbolTree(ObjectReference n, JsonArrayBuilder result) {
-			if (n == null)
-			    return;
-			ReferenceType nt = n.referenceType();
-			Field left = nt.fieldByName("left");
-			Field right = nt.fieldByName("right");
-			Field key = nt.fieldByName("key");
-			Field value = nt.fieldByName("value");
-                        //System.out.println(n.uniqueID());
-			loadResultFromSymbolTree((ObjectReference)n.getValue(left), result);
-			if (n.getValue(value) != null) {
-			    result.add(Json.createArrayBuilder().add(convertValue(n.getValue(key)))
-				       .add(convertValue(n.getValue(value))).build());
-			}
-			loadResultFromSymbolTree((ObjectReference)n.getValue(right), result);
-		    }
-		}
+                class stHandler {
+                    public void loadResultFromSymbolTree(ObjectReference n, JsonArrayBuilder result) {
+                        if (n == null)
+                            return;
+                        ReferenceType nt = n.referenceType();
+                        Field left = nt.fieldByName("left");
+                        Field right = nt.fieldByName("right");
+                        Field key = nt.fieldByName("key");
+                        Field value = nt.fieldByName("value");
+                        loadResultFromSymbolTree((ObjectReference)n.getValue(left), result);
+                        if (n.getValue(value) != null) {
+                            result.add(Json.createArrayBuilder().add(convertValue(n.getValue(key)))
+                                   .add(convertValue(n.getValue(value))).build());
+                        }
+                        loadResultFromSymbolTree((ObjectReference)n.getValue(right), result);
+                    }
+                }
 
-		new stHandler().loadResultFromSymbolTree(firstNode, result); //recursively add key, value pairs to the result
-		return result.build();
-	    }
+                new stHandler().loadResultFromSymbolTree(firstNode, result); //recursively add key, value pairs to the result
+                return result.build();
+            }
 
-	    // now deal with Objects.
-	    heap_done.add(obj.uniqueID());
+            // now deal with Objects.
+            heap_done.add(obj.uniqueID());
             result.add("INSTANCE");
             if (obj.referenceType().name().startsWith("java.lang.")
                 && wrapperTypes.contains(obj.referenceType().name().substring(10))) {
@@ -663,14 +828,14 @@ public class JDI2JSON {
                                                                            Json.createArrayBuilder().add("NUMBER-LITERAL").add(
                                                                                                                                convertValue(obj.getValue(f)))));
             }
-	    return result.build();
-	}
+            return result.build();
+        }
     }
 
     private JsonArray convertVoid = jsonArray("VOID");
 
     private JsonArray jsonArray(Object... args) {
-	JsonArrayBuilder result = Json.createArrayBuilder();
+        JsonArrayBuilder result = Json.createArrayBuilder();
         for (Object o : args) {
             if (o instanceof JsonValue)
                 result.add((JsonValue)o);
@@ -703,35 +868,35 @@ public class JDI2JSON {
         else if (showStringsAsValues && v instanceof StringReference)
             return jsonString(((StringReference)v).value());
         else {
-	    ObjectReference obj = (ObjectReference)v;
+            ObjectReference obj = (ObjectReference)v;
             heap.put(obj.uniqueID(), obj);
             return convertObject(obj, false);
         }
     }
 
     static JsonObject compileErrorOutput(String usercode, String errmsg, long row, long col) {
-	return output(usercode,
-	    Json.createArrayBuilder().add
-	    (Json.createObjectBuilder()
-	     .add("line", ""+row)
-	     .add("event", "uncaught_exception")
-	     .add("offset", ""+col)
-	     .add("exception_msg", Json.createArrayBuilder().add( Json.createArrayBuilder().add(errmsg) ) ))
+        return output(usercode,
+            Json.createArrayBuilder().add
+            (Json.createObjectBuilder()
+             .add("line", ""+row)
+             .add("event", "uncaught_exception")
+             .add("offset", ""+col)
+             .add("exception_msg", Json.createArrayBuilder().add( Json.createArrayBuilder().add(errmsg) ) ))
                       .build()
                       );
 
     }
 
     static String fakify(String realcode) {
-	String[] x = realcode.split("\n", -1);
-	for (int i=0; i<x.length; i++) {
-	    int pos = x[i].indexOf("//><");
-	    if (pos >= 0)
-		x[i] = x[i].substring(pos+4);
-	}
-	StringBuilder sb = new StringBuilder();
-	for (String s:x) {sb.append("\n");sb.append(s);}
-	return sb.substring(1);
+        String[] x = realcode.split("\n", -1);
+        for (int i=0; i<x.length; i++) {
+            int pos = x[i].indexOf("//><");
+            if (pos >= 0)
+            x[i] = x[i].substring(pos+4);
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String s:x) {sb.append("\n");sb.append(s);}
+        return sb.substring(1);
     }
 
     static JsonObject output(String usercode, JsonArray trace) {
@@ -818,8 +983,8 @@ public class JDI2JSON {
             else result.add(w);
             i++;
         }
-	if (tgt == -1)
-	    result.add(v);
+        if (tgt == -1)
+            result.add(v);
         return result.build();
     }
 

@@ -3,13 +3,13 @@
 traceprinter: a Java package to print traces of Java programs
 David Pritchard (daveagp@gmail.com), created May 2013
 
-The contents of this directory are released under the GNU Affero 
+The contents of this directory are released under the GNU Affero
 General Public License, versions 3 or later. See LICENSE or visit:
 http://www.gnu.org/licenses/agpl.html
 
 See README for documentation on this package.
 
-This file was originally based on 
+This file was originally based on
 com.sun.tools.example.trace.Trace, written by Robert Field.
 
 ******************************************************************************/
@@ -44,10 +44,10 @@ public class InMemory {
 
     public static void main(String[] args) {
 
-        JDI2JSON.userlog("Debugger VM maxMemory: " + Runtime.getRuntime().maxMemory() / 1024 / 1024 + "M");    
+        JDI2JSON.userlog("Debugger VM maxMemory: " + Runtime.getRuntime().maxMemory() / 1024 / 1024 + "M");
 
         // just a sanity check, can the debugger VM see this NoopMain?
-        traceprinter.shoelace.NoopMain.main(null); 
+        traceprinter.shoelace.NoopMain.main(null);
         // however, the debuggee might or might not be able to.
         // use the CLASSPATH environment variable so that it includes
         // the parent directory of traceprinter; using -cp does not
@@ -58,7 +58,7 @@ public class InMemory {
                          Json.createReader(new InputStreamReader
                                            (System.in, "UTF-8"))
                          .readObject());
-        } 
+        }
         catch (IOException e) {
             System.out.print(JDI2JSON.compileErrorOutput("[could not read user code]",
                                                          "Internal IOException in php->java",
@@ -66,6 +66,9 @@ public class InMemory {
         }
     }
 
+    // ****************************
+    // method
+    // ****************************
     // convenience version of JDI2JSON method
     void compileError(String msg, long row, long col) {
         try {
@@ -77,13 +80,16 @@ public class InMemory {
         }
     }
 
+    // ****************************
+    // CONSTRUCTOR
+    // ****************************
     // figure out the class name, then compile and run main([])
     InMemory(JsonObject frontend_data) {
         this.usercode = frontend_data.getJsonString("usercode").getString();
         this.optionsObject = frontend_data.getJsonObject("options");
         this.argsArray = frontend_data.getJsonArray("args");
         this.givenStdin = frontend_data.getJsonString("stdin").getString();
-	stdin = this.givenStdin;
+        stdin = this.givenStdin;
 
         if (frontend_data.containsKey("visualizer_args") && (!frontend_data.isNull("visualizer_args"))) {
             JsonObject visualizer_args = frontend_data.getJsonObject("visualizer_args");
@@ -141,11 +147,14 @@ public class InMemory {
         vm.resume();
     }
 
+    // ****************************
+    // method
+    // ****************************
     VirtualMachine launchVM(String className) {
         LaunchingConnector connector = theCommandLineLaunchConnector();
         try {
 
-            java.util.Map<String, Connector.Argument> args 
+            java.util.Map<String, Connector.Argument> args
                 = connector.defaultArguments();
 
             /* what are the other options? on my system,
@@ -155,7 +164,7 @@ public class InMemory {
                 System.out.print("["+arg.getValue().value()+"]: ");
                 System.out.println(arg.getValue().description());
             }
-            
+
             prints out:
 
 home [/java/jre]: Home directory of the SDK or runtime environment used to launch the application
@@ -168,11 +177,11 @@ vmexec [java]: Name of the Java VM launcher
             For more info, see
 http://docs.oracle.com/javase/7/docs/jdk/api/jpda/jdi/com/sun/jdi/connect/Connector.Argument.html
             */
-            
+
             ((Connector.Argument)(args.get("main"))).setValue(className);
-            
+
             String options = "";
-            
+
             // inherit the classpath. if it were not for this, the CLASSPATH environment
             // variable would be inherited, but the -cp command-line option would not.
             // note that -cp overrides CLASSPATH.
@@ -180,43 +189,46 @@ http://docs.oracle.com/javase/7/docs/jdk/api/jpda/jdi/com/sun/jdi/connect/Connec
             options += "-cp " + System.getProperty("java.class.path") + " ";
 
             // set a memory limit
-            
+
             options += "-Xmx768M" + " "; // pgbovine
-            
+
             options += "-Dfile.encoding=UTF-8" + " ";
 
             options += "-Djava.awt.headless=true" + " ";
 
             ((Connector.Argument)(args.get("options"))).setValue(options);
-            
-            //	    System.out.println("About to call LaunchingConnector.launch...");
-	    VirtualMachine result = connector.launch(args);
-	    //System.out.println("...done");
+
+            System.err.println("About to call LaunchingConnector.launch...");
+            VirtualMachine result = connector.launch(args);
+            System.err.println("...done");
+
             return result;
         } catch (VMStartException exc) {
-	    System.out.println("Hoeyx!");
+            System.out.println("Hoeyx!");
             System.out.println("Failed in launchTarget: " + exc.getMessage());
             exc.printStackTrace();
-	    byte[] b = new byte[100000];
-	    System.out.println(exc.process().exitValue());
-	    try {
-		BufferedReader in = new BufferedReader(new InputStreamReader(exc.process().getErrorStream()));
-		String inputLine;
-		while ((inputLine = in.readLine()) != null)
-		    System.out.println(inputLine);
-		in = new BufferedReader(new InputStreamReader(exc.process().getInputStream()));
-		while ((inputLine = in.readLine()) != null)
-		    System.out.println(inputLine);
+            byte[] b = new byte[100000];
+            System.out.println(exc.process().exitValue());
+            try {
+                BufferedReader in = new BufferedReader(new InputStreamReader(exc.process().getErrorStream()));
+                String inputLine;
+                while ((inputLine = in.readLine()) != null) {
+                    System.out.println(inputLine);
+                }
+                in = new BufferedReader(new InputStreamReader(exc.process().getInputStream()));
+                while ((inputLine = in.readLine()) != null) {
+                    System.out.println(inputLine);
+                }
 
-	    }
-	    catch (java.io.IOException excx) {
-		System.out.println("Crud");
-	    }
+            }
+            catch (java.io.IOException excx) {
+                System.out.println("Crud");
+            }
         } catch (java.io.IOException exc) {
             System.out.println("Failed in launchTarget: " + exc.getMessage());
             exc.printStackTrace();
         } catch (IllegalConnectorArgumentsException exc) {
-	    System.out.println("Hoeyy!");
+            System.out.println("Hoeyy!");
             for (String S : exc.argumentNames()) {
                 System.out.println(S);
             }
@@ -225,9 +237,12 @@ http://docs.oracle.com/javase/7/docs/jdk/api/jpda/jdi/com/sun/jdi/connect/Connec
         return null; // when caught
     }
 
+    // ****************************
+    // method
+    // ****************************
     LaunchingConnector theCommandLineLaunchConnector() {
-        for (Connector connector : 
-                 Bootstrap.virtualMachineManager().allConnectors()) 
+        for (Connector connector :
+                 Bootstrap.virtualMachineManager().allConnectors())
             if (connector.name().equals("com.sun.jdi.CommandLineLaunch"))
                 return (LaunchingConnector)connector;
         throw new Error("No launching connector");

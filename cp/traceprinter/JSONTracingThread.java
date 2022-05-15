@@ -113,7 +113,7 @@ public class JSONTracingThread extends Thread {
                 for (Event ev : new Iterable<Event>(){public Iterator<Event> iterator(){return eventSet.eventIterator();}}) {
 
 
-                    //System.out.println("in run: " + steps+" "+ev+" "+(System.currentTimeMillis()-startTime));
+                    // System.out.println("run: " + steps+" "+ev+" "+(System.currentTimeMillis()-InMemory.startTime));
 
                     //        System.out.println(currentTimeMillis());
                     if (System.currentTimeMillis() > MAX_WALLTIME_SECONDS * 1000 + InMemory.startTime) {
@@ -196,7 +196,7 @@ public class JSONTracingThread extends Thread {
     ThreadReference theThread = null;
 
     private Thread handleEvent(Event event) {
-        //System.out.println(event);
+        // System.out.println("handleEvent " + event);
         if (event instanceof ClassPrepareEvent) {
             classPrepareEvent((ClassPrepareEvent)event);
         } else if (event instanceof VMDeathEvent) {
@@ -206,7 +206,7 @@ public class JSONTracingThread extends Thread {
         }
 
         if (event instanceof LocatableEvent) {
-            //System.out.println("in handle subloop: " + steps+" "+event);
+            // System.out.println("in handle subloop: " + steps+" "+event);
             if (theThread == null)
                 theThread = ((LocatableEvent)event).thread();
             else {
@@ -224,10 +224,10 @@ public class JSONTracingThread extends Thread {
 
             if (steps < MAX_STEPS && jdi2json.reportEventsAtLocation(loc)
                 || event instanceof ExceptionEvent && ((ExceptionEvent)event).catchLocation()==null) {
-		try {
+                try {
                     for (JsonObject ep : jdi2json.convertExecutionPoint(event, loc, theThread)) {
-			output.add(ep);
-			steps++;
+                        output.add(ep);
+                        steps++;
                         int stackSize = ((JsonArray)ep.get("stack_to_render")).size();
 
                         boolean quit = false;
@@ -237,22 +237,22 @@ public class JSONTracingThread extends Thread {
                                        .add("event", "instruction_limit_reached"));
                             quit = true;
                         }
-			if (steps == MAX_STEPS) {
+                        if (steps == MAX_STEPS) {
                             output.add(Json.createObjectBuilder()
                                        .add("exception_msg", "Stopped after running " + String.valueOf(MAX_STEPS) + " steps. Please shorten your code,\nsince Python Tutor is not designed to handle long-running code.")
                                        .add("event", "instruction_limit_reached"));
-			    quit = true;
-			}
+                            quit = true;
+                        }
                         if (quit)
                             vm.exit(0);
-		    }
+                    }
                     if (event instanceof ExceptionEvent && ((ExceptionEvent)event).catchLocation()==null) {
                         vm.exit(0);
                     }
-		} catch (RuntimeException e) {
-		    System.out.println("Error " + e.toString());
-		    e.printStackTrace();
-		}
+                } catch (RuntimeException e) {
+                    System.out.println("Error " + e.toString());
+                    e.printStackTrace();
+                }
             }
         }
         return null;

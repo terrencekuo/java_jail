@@ -4,3 +4,5 @@ proc
 compile
 etc/resolv.conf
 lib
+*.swp
+*.swo
