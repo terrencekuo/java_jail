@@ -405,7 +405,22 @@ public class JDI2JSON {
                 if (!newFrame.getString("func_name").equals(oldFrame.getString("func_name"))) {
                     // System.err.println("same func_name " + newFrame.getString("func_name") + " " + oldFrame.getString("func_name"));
                     isSame = false;
+                } else {
+                    // stack name could stay the same while other fields change
+                    // we will want to keep preserver the unique_hash / frame_id in this case
+                    System.err.println("found same func_name for oldEp and newEp. preserver unique_hash and frame_id");
+
+                    // since JsonObject are immutable, we need to create the newFrame and then update the "unique_hash" and "frame_id" field
+                    // https://docs.oracle.com/javaee/7/api/javax/json/JsonObject.html
+                    JsonObjectBuilder jsonObjectBuilder = Json.createObjectBuilder();
+                    for(String key : newFrame.keySet()) {
+                        jsonObjectBuilder.add(key, newFrame.get(key));
+                    }
+                    jsonObjectBuilder.add("unique_hash", oldFrame.getString("unique_hash"));
+                    jsonObjectBuilder.add("frame_id", oldFrame.get("frame_id"));
+                    newFrame = jsonObjectBuilder.build();
                 }
+
                 if (!newFrame.getJsonObject("encoded_locals").equals(oldFrame.getJsonObject("encoded_locals"))) {
                     // System.err.println("same encoded_locals " + newFrame.getJsonObject("encoded_locals") + " " +  oldFrame.getJsonObject("encoded_locals"));
                     isSame = false;
