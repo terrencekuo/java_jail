@@ -392,23 +392,33 @@ public class JDI2JSON {
         JsonArray oldEp = old_ep.getJsonArray("stack_to_render");
         int newEpSize = new_ep.getJsonArray("stack_to_render").size();
         int oldEpSize = old_ep.getJsonArray("stack_to_render").size();
+        Set<String> set = new HashSet<String>();
         JsonArrayBuilder result = Json.createArrayBuilder();
         boolean overOverAllSame = false;
         for (int i=0; i<newEpSize; i++) {
             boolean overallSame = false;
             JsonObject newFrame = (JsonObject) newEp.getJsonObject(i);
 
+            boolean foundSameFuncName = false;
+            if (set.contains(newFrame.getString("func_name"))) {
+                foundSameFuncName = true;
+            } else {
+                set.add(newFrame.getString("func_name"));
+            }
+
             for (int j=0; j<oldEpSize; j++) {
                 boolean isSame = true;
                 JsonObject oldFrame = (JsonObject) oldEp.getJsonObject(j);
 
-                if (!newFrame.getString("func_name").equals(oldFrame.getString("func_name"))) {
+                if (!newFrame.getString("func_name").equals(oldFrame.getString("func_name")) ||
+                    foundSameFuncName) // EDGE CASE: for recursion + multiple contructor we actually have the same name and need to use a new unique_hash
+                {
                     // System.err.println("same func_name " + newFrame.getString("func_name") + " " + oldFrame.getString("func_name"));
                     isSame = false;
                 } else {
                     // stack name could stay the same while other fields change
                     // we will want to keep preserver the unique_hash / frame_id in this case
-                    System.err.println("found same func_name for oldEp and newEp. preserver unique_hash and frame_id");
+                    System.err.println("found same func_name for oldEp and newEp. preserver unique_hash and frame_id. func=" + newFrame.getString("func_name"));
 
                     // since JsonObject are immutable, we need to create the newFrame and then update the "unique_hash" and "frame_id" field
                     // https://docs.oracle.com/javaee/7/api/javax/json/JsonObject.html
@@ -422,11 +432,11 @@ public class JDI2JSON {
                 }
 
                 if (!newFrame.getJsonObject("encoded_locals").equals(oldFrame.getJsonObject("encoded_locals"))) {
-                    // System.err.println("same encoded_locals " + newFrame.getJsonObject("encoded_locals") + " " +  oldFrame.getJsonObject("encoded_locals"));
+                    // System.err.println("diff encoded_locals " + newFrame.getJsonObject("encoded_locals") + " " +  oldFrame.getJsonObject("encoded_locals"));
                     isSame = false;
                 }
                 if (!newFrame.getJsonArray("ordered_varnames").equals(oldFrame.getJsonArray("ordered_varnames"))) {
-                    // System.err.println("same ordered_varnames " + newFrame.getJsonArray("ordered_varnames") + " " + oldFrame.getJsonArray("ordered_varnames"));
+                    // System.err.println("diff ordered_varnames " + newFrame.getJsonArray("ordered_varnames") + " " + oldFrame.getJsonArray("ordered_varnames"));
                     isSame = false;
                 }
 
